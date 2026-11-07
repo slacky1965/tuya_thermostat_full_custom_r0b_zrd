@@ -1,0 +1,555 @@
+/* Screen state: brightness policy, composition of the ON/OFF screens, standby
+   phases, padlock indication and the NET symbol. Extracted from main.c in
+   waves; main() drives these helpers from its event drain and 1 s tick. */
+#include "include/config.h"
+#include "include/stdint.h"
+#include "include/buttons.h"
+#include "include/debug.h"
+#include "include/link_proto.h"
+#include "include/led.h"
+#include "include/lcd.h"
+#include "include/modes.h"
+#include "include/relay.h"
+#include "include/rtc.h"
+#include "include/settings.h"
+#include "include/temp_pipeline.h"
+
+uint8_t xdata bright_hold;                /* seconds left of the max-brightness window */
+/* xdata initialisers are useless: xdata_clear() zeroes XISEG at boot and      */
+/* Thermo_Apply() re-arms bright_level. Kept commented for reference.          */
+static uint8_t xdata bright_level /* = 0xFF */;  /* last level applied to the LEDs */
+
+/* Base brightness for the current time of day: day 06:00-22:00, night the rest. */
+uint8_t Bright_LevelBase(void) {
+	XDATA_TMP(uint8_t, h);
+
+	RTC_ReadTime(&h, 0, 0, 0);
+	if((h >= 6) && (h < 22)) {
+		return settings.currentLevel_day;
+	}
+	return settings.currentLevel_night;
+}
+
+/* Apply a unified brightness (0=off, 1-8) to the display + all backlights.     */
+/* Only meaningful while power_on; the green leaf is only for the OFF standby.  */
+void Bright_Apply(uint8_t level) {
+	if(level == bright_level) return;   /* already applied (per-event drain refresh) */
+	bright_level = level;
+	Lcd_SetBrightness((uint8_t)level);
+	PowerLed_SetLevel(level);           /* power-key LED tracks the same UI level   */
+	Led_Backlight(BL_KEYS,  (uint8_t)level);
+	Led_Backlight(BL_RED,   (uint8_t)level);
+	Led_Backlight(BL_WHITE, (uint8_t)level);
+	Led_Backlight(BL_GREEN, LED_BRIGHTNESS_OFF);
+}
+
+/* Re-arm the max-brightness window and apply it. One definition for every      */
+/* place that must spike the display: a lock change, the NET blink, a mode      */
+/* that owns the display, and any key event.                                    */
+void Bright_MaxHold(void) {
+	bright_hold = BRIGHTNESS_HOLD_SECS;
+	Bright_Apply(LED_BRIGHTNESS_MAX);
+}
+
+/* Standby fade after OFF: the 4 touch keys stay at full brightness for a few  */
+/* seconds, then only the green ON/OFF leaf glows (settings day/night level).  */
+/* (STANDBY_KEYS_SECS lives in include/modes.h: main() arms off_hold with it.) */
+uint8_t xdata off_hold;                 /* seconds left of the touch-key stay phase */
+/* xdata initialiser dropped: xdata_clear() zeroes it, Thermo_Apply re-arms it. */
+static uint8_t xdata green_level /* = 0xFF */; /* last BL_GREEN level while OFF */
+
+/* Backlight pattern shared by every OFF screen: the touch keys and the green  */
+/* ON/OFF leaf at the given levels, red strip and white power key off. One     */
+/* definition, so the padlock blink, the NET blink and the standby phase can   */
+/* never drift apart.                                                          */
+void Backlights_Off(uint8_t level) {
+	Led_Backlight(BL_KEYS,  level);
+	Led_Backlight(BL_RED,   LED_BRIGHTNESS_OFF);
+	Led_Backlight(BL_WHITE, LED_BRIGHTNESS_OFF);
+	Led_Backlight(BL_GREEN, level);
+}
+
+/* OFF phase 1: display off, the 4 touch keys + green ON/OFF leaf glow at     */
+/* full brightness for a few seconds; after the hold (Thermo_Apply at OFF)    */
+/* the keys go off and the green leaf dims to the settings day/night level.   */
+/* OFF key-stay phase: the panel is already dark (the OFF state never   */
+/* spends display brightness on the standby), the Power LED rides at    */
+/* MAX for the whole STANDBY_KEYS_SECS window and the steady standby    */
+/* settles it to the configured level. The buffer keeps the OFF line    */
+/* and the padlock.                                                      */
+void Standby_KeysApply(void) {
+	Lcd_Clear();
+	Lock_Sym();
+	Lcd_SymSet(SYM_OFF, 1);          /* OFF line holds through the key phase    */
+	Lcd_SetBrightness(LED_BRIGHTNESS_OFF); /* panel dark from the OFF moment    */
+	Backlights_Off(LED_BRIGHTNESS_MAX);
+	PowerLed_SetLevel(LED_BRIGHTNESS_MAX); /* full during the 7 s key-stay, then */
+	                                    /* the steady helper drops it to the    */
+	                                    /* configured level                     */
+	green_level = LED_BRIGHTNESS_MAX;   /* the steady standby re-applies the level */
+	Lcd_Flush();
+}
+
+const temp_sample_t xdata *Temp_DisplaySample(void) {
+	return (temp_src == SENSOR_SRC_IN) ?
+		Temp_Pipeline_Get(TEMP_INTERNAL) : Temp_Pipeline_Get(TEMP_EXTERNAL);
+}
+
+/* One place that turns a pipeline snapshot into the big digits: an invalid    */
+/* sample shows "Er" (the degree C stays lit) instead of a stale number.       */
+/* In AL a dead probe of EITHER kind shows "Er": the pair drives the relay, so */
+/* a half-dead pair must not look healthy on screen.                           */
+
+/* AL "Er" alternation state: while one probe of the AL pair is dead the       */
+/* display cycles between the survivor's temperature and "Er", so the value    */
+/* the relay actually heats by stays visible. The machine is driven by         */
+/* Temp_ErPoll() on the 100 ms main-loop grid; phase lengths live in config.h. */
+static uint16_t xdata er_alt_deadline;  /* tick10ms time of the next flip      */
+static bit er_alt_run;                  /* 1 = the machine is cycling          */
+static bit er_alt_lit;                  /* 1 = the current phase shows "Er"    */
+
+/* 1 = the AL pair is half-dead and no fresh WS owns the digits: the pair      */
+/* verdict is "Er" but exactly one probe keeps an accepted value.              */
+static uint8_t Temp_ErAltCondition(void) {
+	const temp_sample_t xdata *in;
+	const temp_sample_t xdata *ext;
+
+	if(temp_src != SENSOR_SRC_ALL || Link_WsFresh()) return 0;
+	in  = Temp_Pipeline_Get(TEMP_INTERNAL);
+	ext = Temp_Pipeline_Get(TEMP_EXTERNAL);
+	if(in->accepted_valid && ext->accepted_valid) return 0;
+	return (uint8_t)(in->accepted_valid || ext->accepted_valid);
+}
+
+void Temp_Draw(const temp_sample_t xdata *sample) {
+	const temp_sample_t xdata *in;
+	const temp_sample_t xdata *ext;
+	uint8_t ok;
+
+	/* WS override: while the wireless sensor is fresh it drives the relay, so  */
+	/* it owns the big digits too. Its value was validated on arrival and the   */
+	/* wired probes are irrelevant here - no "Er" verdict. When it goes stale   */
+	/* the very next redraw falls back to the configured probes below.          */
+	if(Link_WsFresh()) {
+		Lcd_Temp(Link_WsTemp());
+		return;
+	}
+	ok = sample->accepted_valid;
+	if(temp_src == SENSOR_SRC_ALL) {
+		in  = Temp_Pipeline_Get(TEMP_INTERNAL);
+		ext = Temp_Pipeline_Get(TEMP_EXTERNAL);
+		ok = (uint8_t)(ok && in->accepted_valid && ext->accepted_valid);
+		if(!ok) {
+			/* half-dead pair: while the alternation machine runs the        */
+			/* temperature phase shows the survivor's value; an idle/frozen  */
+			/* machine (power OFF, a mode or an adjust window owns the       */
+			/* screen, or the pair went fully dead) keeps the plain "Er".    */
+			if(er_alt_run && !er_alt_lit) {
+				Lcd_Temp(in->accepted_valid ? in->accepted_c100
+				                            : ext->accepted_c100);
+				return;
+			}
+			Lcd_TempErr();
+			return;
+		}
+	}
+	if(ok) Lcd_Temp(sample->accepted_c100);
+	else   Lcd_TempErr();
+}
+
+/* 100 ms poll driving the AL "Er"/temperature alternation. Redraws only at    */
+/* phase transitions through Temp_Draw(); the machine stops (Temp_Draw keeps   */
+/* the plain "Er") while power is OFF, a mode owns the screen, an adjust       */
+/* window (Set / %RH) is up, the pair is healthy or a fresh WS owns the        */
+/* digits. On every restart the temperature phase comes first.                 */
+void Temp_ErPoll(void) {
+	uint16_t now;
+
+	if(!power_on || !Screen_ModeFree() || adj_remain ||
+	   !Temp_ErAltCondition()) {
+		er_alt_run = 0;
+		er_alt_lit = 0;
+		return;
+	}
+	now = BTN_Tick10ms();
+	if(!er_alt_run) {
+		er_alt_run = 1;
+		er_alt_lit = 0;
+		er_alt_deadline = (uint16_t)(now + TEMP_ER_TEMP_10MS_TICKS);
+		Temp_Draw(Temp_DisplaySample());   /* survivor value right away        */
+		return;
+	}
+	if((int16_t)(now - er_alt_deadline) < 0) return;
+	er_alt_lit = !er_alt_lit;
+	er_alt_deadline = (uint16_t)(now + (er_alt_lit ? TEMP_ER_WARN_10MS_TICKS
+	                                            : TEMP_ER_TEMP_10MS_TICKS));
+	Temp_Draw(Temp_DisplaySample());
+}
+
+/*******************************************************************************/
+void Clock_Draw(void) {
+	XDATA_TMP(uint8_t, h);
+	XDATA_TMP(uint8_t, m);
+
+	RTC_ReadTime(&h, &m, 0, 0);
+	Lcd_Clock(h, m, clock_colon);
+	Lcd_Flush();      /* push now: a caller must never rely on the next 1 s tick */
+}
+
+/*********************************************************************************/
+/* Re-apply the green ON/OFF leaf to the current day/night level while OFF.      */
+/* Called once per second from the standby branch so the leaf follows 06:00 and  */
+/* 22:00 (and a host time sync) without waiting for a power toggle.              */
+/* The power-key LED rides the same helper: the 7 s key-stay phase lights it at  */
+/* MAX, and this helper settles it to the configured level for the rest of the   */
+/* OFF state (the r02 green-leaf policy, applied to the key LED). The PANEL is  */
+/* dark in steady standby regardless of the keypad lock: the buffer keeps only  */
+/* the OFF line and the padlock, and no display brightness is spent on them -   */
+/* only the LED Power glows at the day/night level.                              */
+/* The register write is idempotent; the helper only runs in                     */
+/* steady standby, where nothing else owns the display.                          */
+void Standby_GreenApply(void) {
+	uint8_t lvl = Bright_LevelBase();
+
+	if(lvl != green_level) {
+		green_level = lvl;
+		Led_Backlight(BL_GREEN, lvl);
+	}
+	Lcd_SetBrightness(LED_BRIGHTNESS_OFF);   /* dark panel: brightness lives   */
+	                                    /* only on the Power LED now        */
+	PowerLed_SetLevel(lvl);         /* settle the key LED to the config level    */
+}
+
+/* OFF feedback for the lock (chord or remote 0x17): blink the padlock on the   */
+/* dark display so the toggle is visible. One phase = 300 ms, 10 phases = 5     */
+/* full blinks (~3 s) at full brightness. Phases only own the blink itself:     */
+/* afterwards a locked unit keeps the padlock glowing at the settings day/night */
+/* level next to the green leaf.                                                */
+#define LOCK_FLASH_PHASES  10
+#define LOCK_FLASH_TICKS   30
+#define LOCK_FLASH_LEVEL   LED_BRIGHTNESS_MAX
+uint8_t xdata lock_flash;                 /* phases left to run                         */
+uint8_t xdata trace_tail;                 /* LOCK_TRACE_EN: seconds of probe life after */
+                                          /* the blink, so the post-blink state is      */
+                                          /* visible (all probes test lock_flash||this) */
+static uint16_t xdata lock_flash_tick;    /* tick10ms of the last flip                  */
+static uint8_t xdata lock_flash_lit;      /* padlock currently lit                      */
+
+/* Padlock symbol follows settings.keypadLockout; one definition for the three  */
+/* places that draw it (power-on screen, lock change, 1 s redraw).              */
+void Lock_Sym(void) {
+	Lcd_SymSet(SYM_LOCK, settings.keypadLockout != 0);
+}
+
+/* ON: a keypad-lock change (local chord or remote 0x17) gets a fresh-ON        */
+/* brightness spike and redraws the padlock at once, so the change is visible   */
+/* on an otherwise dimmed display. One definition for both entry points.        */
+void Lock_On_Screen(void) {
+	Bright_MaxHold();
+	Lock_Sym();
+	Lcd_Flush();
+}
+
+/* Thermostat state: power always startup OFF.                                  */
+bit power_on;    /* 0 = off (green leaf), 1 = on (white leaf + display)  */
+bit ext_ok;      /* 1 = external probe present (SYM_HEATER)              */
+
+/* "NET" (SYM_NET) blink: started by a >=2 s DOWN hold while OFF. Blinks OVER  */
+/* whatever is on screen (dark in OFF, the normal UI in ON) for 1.5 min, then  */
+/* stops by itself. A future ZT3L network event may stop it earlier / turn the */
+/* symbol on steady (see Net_Flash_Stop()/Net_Set_Steady() below).             */
+/* (NET_HOLD_10MS_TICKS stays in main.c: it arms down_arm in the key drain.)   */
+
+/* Light the schedule-slot house of the period that owns "now": today's last   */
+/* valid transition at or before the clock, else - before the day's first       */
+/* transition or on an empty day - the last transition of the most recent       */
+/* programmed day (weekly-curve rule, up to 7 days back; see Sched_FindActive). */
+/* Every house is off in manual mode or when the whole week is empty. The       */
+/* editing screens (sched_mode) draw the edited slot themselves - this helper   */
+/* only runs while no mode owns the screen. Uses the SAME resolver as the        */
+/* active setpoint, so the icon can never disagree with the control.            */
+void Sched_SlotApply(void) {
+	XDATA_TMP(uint8_t, h);
+	XDATA_TMP(uint8_t, m);
+	XDATA_TMP(uint8_t, wd);
+	/* day/idx are written THROUGH pointers by Sched_FindActive: they MUST be */
+	/* xdata statics (XDATA_TMP), the codebase rule for every pointer target   */
+	/* (BTN_GetEvent(&b), RTC_ReadTime(&h..), MDU temporaries). Plain stack    */
+	/* automatics here produced garbage (day=12/idx=6 - impossible ranges): the */
+	/* pointer stores did not land and the slots held RTC_ReadTime leftovers;   */
+	/* idx=6 then mapped to SYM_PM (no-op) -> no house ever lit.                */
+	XDATA_TMP(uint8_t, day);
+	XDATA_TMP(uint8_t, idx);
+	uint8_t i;
+	uint8_t found;
+
+	for(i = 0; i < LNK_SCHED_N; i++) {
+		Lcd_SymSet((uint8_t)(SYM_SP1 + i), 0);
+	}
+	if(!(settings.progMode & PROG_MODE_SCHEDULE)) {
+		/* diag: the house row is dark simply because the mode is manual      */
+		DEBUG(BUTTONS_EN, { debug_puts("slot manual\r\n"); });
+		return;
+	}
+	found = Sched_FindActive(&day, &idx);
+	if(found) {
+		Lcd_SymSet((uint8_t)(SYM_SP1 + idx), 1);
+	}
+	/* ONE line per second: input (wd, now) + resolver pick. Two separate     */
+	/* lines do NOT work here - debug.c keeps a single pending line and the   */
+	/* second one (issued before Debug_Poll ships the first) is always dropped.*/
+	RTC_ReadTime(&h, &m, 0, &wd);
+	DEBUG(BUTTONS_EN, {
+		debug_puts("slot wd=");
+		debug_dec(wd);
+		debug_puts(" now=");
+		debug_dec((uint16_t)h * 60 + m);
+		if(found) {
+			debug_puts(" -> day=");
+			debug_dec(day);
+			debug_puts(" idx=");
+			debug_dec(idx);
+		}
+		else {
+			debug_puts(" -> none");
+		}
+		debug_puts("\r\n");
+	});
+}
+#define NET_FLASH_SECS   90                  /* 1.5 minutes                              */
+#define NET_FLASH_TICKS  30                  /* 300 ms per half-phase                    */
+uint8_t xdata net_flash;                     /* 1 = blink active                         */
+static uint8_t xdata net_flash_lit;          /* current phase (1 = lit)                  */
+uint8_t xdata net_flash_secs;                /* seconds left before auto-stop            */
+static uint16_t xdata net_flash_tick;        /* tick10ms of the last flip                */
+static uint8_t xdata net_steady;             /* 1 = NET on steady (future ZT3L)          */
+uint8_t xdata net_hold;                      /* OFF: seconds left of the steady          */
+                                             /* NET display before the standby fade      */
+/*****************************************************************************************/
+/* Apply the whole LED state (display + all backlights) for power_on/off.       */
+/* The manual/schedule icon pair: ONE mapping for the remote window, the        */
+/* local MENU click and this repaint (was three hand-written copies that had    */
+/* already drifted in formatting). progMode is a bitmap - hand/clock follow the */
+/* schedule BIT.                                                                */
+void ProgMode_Icons(uint8_t pm) {
+	Lcd_SymSet(SYM_HAND,  (pm & PROG_MODE_SCHEDULE) ? 0 : 1);
+	Lcd_SymSet(SYM_CLOCK, (pm & PROG_MODE_SCHEDULE) ? 1 : 0);
+}
+
+/* 1 when NO settings mode owns the screen. Single source for the six           */
+/* clk/sched/menu triple compares that used to live in main.c (two spellings).  */
+uint8_t Screen_ModeFree(void) {
+	return (uint8_t)(clk_set == CLK_SET_OFF && sched_set == SCHED_SET_OFF &&
+	                 menu_set == MENU_OFF);
+}
+
+void Thermo_Apply(void) {
+	const temp_sample_t xdata *sample = Temp_DisplaySample();
+
+	/* any full live-screen repaint kills a running value window: the window  */
+	/* content is already gone (Lcd_Clear on OFF / mode entry) and a stale    */
+	/* adj_remain would only suppress the measured-temperature redraw         */
+	adj_remain = 0;
+	bright_level = 0xFF;   /* power change: force a full brightness re-apply */
+	green_level  = 0xFF;   /* power change: force a green-leaf re-apply      */
+
+	if(power_on) {
+		/* power-on: max brightness for the hold window (decays to the day/night level) */
+		bright_hold = BRIGHTNESS_HOLD_SECS;
+		Bright_Apply(LED_BRIGHTNESS_MAX);
+		Lcd_SymSet(SYM_THERMO, 1);     /* house+thermometer: the temperature view */
+		Lcd_SymSet(SYM_HEATER, ext_ok);
+		Lcd_SymSet(SYM_HEAT, 0);         /* updated by the 1 s control tick */
+		Lock_Sym();
+		Lcd_SymSet(SYM_NET,  net_steady);  /* steady when joined the network */
+		ProgMode_Icons(settings.progMode);
+		Sched_SlotApply();              /* current schedule-slot house (PROG)    */
+		Lcd_SymSet(SYM_H, 1);           /* the "h" of the hour counter - always  */
+		Lcd_SymSet(SYM_OFF, 0);         /* OFF line belongs to the OFF state     */
+		Lcd_Weekday(RTC_GetWeek());      /* light the current day-of-week */
+		clock_colon = 1;                 /* ':' starts lit                */
+		Clock_Draw();
+		Temp_Draw(sample);
+	}
+	else {
+		/* standby: display off, only the green ON/OFF leaf glows at the         */
+		/* settings day/night level - plus the padlock while the keypad is       */
+		/* locked, at that same level (after the 3 s hold it keeps glowing       */
+		/* together with the leaf; level 0 = everything dark, as before).        */
+		Relay_Set(0);                    /* heating off whenever the unit is off */
+		Lcd_Clear();
+		Lock_Sym();
+		Lcd_SymSet(SYM_OFF, 1);          /* lit for the WHOLE OFF state          */
+		Lcd_SetBrightness(LED_BRIGHTNESS_OFF); /* dark panel; brightness lives  */
+	                                    /* only on the Power LED (7 s phase    */
+	                                    /* re-lights the panel at MAX)         */
+		Backlights_Off(LED_BRIGHTNESS_OFF);
+		Standby_GreenApply();
+		Lcd_Flush();
+	}
+}
+/******************************************************************************/
+/* OFF provisioning screen: display ON at max, 4 touch keys + green leaf at   */
+/* max, red/white off, clean shadow buffer (only NET toggles over it). Used   */
+/* by the NET blink and restored whenever that blink is interrupted.          */
+/* Screen ownership while OFF: the padlock blink (Lock_Flash) > NET blink >   */
+/* standby key phase > steady standby. Every entry point below therefore asks */
+/* whether lock_flash is running and leaves the screen alone if it is; only   */
+/* Lock_Flash() itself paints, and its completion restores the right screen.  */
+void NetBlink_Screen(void) {
+	off_hold = 0;
+	Lcd_Clear();
+	Lcd_SymSet(SYM_OFF, 1);          /* the unit is OFF during provisioning     */
+	Backlights_Off(LED_BRIGHTNESS_MAX);
+	PowerLed_SetLevel(LED_BRIGHTNESS_MAX); /* same full-brightness phase         */
+	Lcd_SetBrightness(LED_BRIGHTNESS_MAX);
+	Lcd_Flush();
+}
+
+void Lock_Flash_Start(void) {
+	lock_flash = LOCK_FLASH_PHASES;
+	lock_flash_tick = BTN_Tick10ms();
+	lock_flash_lit = 0;                 /* the first Lock_Flash() flips to ON */
+	DEBUG(LOCK_TRACE_EN, { debug_putc('!'); });
+
+	/* Own the screen right now and show a DARK panel: the buffer holds no      */
+	/* symbols (Lcd_Clear clears + flushes), every backlight is off, and      */
+	/* the display keeps RUNNING at LOCK_FLASH_LEVEL - from here on only the    */
+	/* SYM_LOCK bit is toggled, exactly like Net_Flash() does for SYM_NET       */
+	/* (no clock stop, no BLNK - each produced its own visual artifact). Cut    */
+	/* the other OFF phases too (same treatment NetBlink_Screen gives           */
+	/* off_hold): neither the 7 s key-stay nor the NET steady hold may re-light */
+	/* the keys behind or after the blink.                                      */
+	off_hold = 0;
+	net_hold = 0;
+	Lcd_Clear();
+	Lcd_SymSet(SYM_OFF, 1);          /* OFF line holds through the blink        */
+	Lcd_Flush();
+	Backlights_Off(LED_BRIGHTNESS_OFF);
+	Lcd_SetBrightness(LOCK_FLASH_LEVEL);
+	PowerLed_SetLevel(LED_BRIGHTNESS_MAX); /* the blink phases run at MAX        */
+}
+
+/* one 10 ms-driven phase of the padlock blink; call from the main loop while */
+/* the thermostat is OFF. Aborts if the unit is turned back on mid-flash.     */
+void Lock_Flash(void) {
+	uint16_t e;
+
+	if(!lock_flash) return;
+	if(power_on) {
+		lock_flash = 0;                 /* power changed mid-flash: stop it */
+		return;
+	}
+	e = (uint16_t)(BTN_Tick10ms() - lock_flash_tick);
+	if(e < LOCK_FLASH_TICKS) return;
+	lock_flash_tick = BTN_Tick10ms();
+	/* toggle ONLY the symbol bit - the panel, the clock and the brightness     */
+	/* stay untouched for the whole blink (Net_Flash style). The buffer holds   */
+	/* nothing else, so the "off" phase is an empty (visually dark) panel.      */
+	lock_flash_lit = !lock_flash_lit;
+	Lcd_SymSet(SYM_LOCK, lock_flash_lit);
+	DEBUG(LOCK_TRACE_EN, { debug_putc(lock_flash_lit ? (uint8_t)'+' : (uint8_t)'-'); });
+	Lcd_Flush();
+	if(--lock_flash == 0) {
+		DEBUG(LOCK_TRACE_EN, { debug_putc('#'); trace_tail = 2; });
+		/* hand the screen back in priority order: a provisioning blink that was
+		   interrupted, the NET steady hold, then the standby phases.            */
+		if(net_flash)     NetBlink_Screen();
+		else if(off_hold) Standby_KeysApply();
+		else if(net_hold) {   /* a NET steady hold was interrupted: restore it */
+			NetBlink_Screen();
+			Lcd_SymSet(SYM_NET, 1);
+			Lcd_Flush();
+		}
+		else              Thermo_Apply();
+	}
+}
+/********************************************************************************/
+/* NET (SYM_NET) blink: >=2 s DOWN hold while OFF arms a 1.5 min blink.         */
+void Net_Flash_Start(void) {
+	net_flash = 1;
+	net_flash_lit = 0;
+	net_flash_secs = NET_FLASH_SECS;
+	net_flash_tick = BTN_Tick10ms();
+	if(power_on) {
+		/* hold full brightness for the whole blink */
+		Bright_MaxHold();
+	}
+	else if(!lock_flash) {
+		/* OFF: end the touch-key stay phase; while the blink runs the 4 touch */
+		/* keys + green leaf stay at FULL brightness, the display ON at max    */
+		/* (only NET toggles), so every flash is identical. A running padlock  */
+		/* blink keeps the screen: it restores the NET screen when it ends.    */
+		NetBlink_Screen();
+	}
+}
+
+/* stop the blink now (auto after 1.5 min, or a future ZT3L network event)      */
+void Net_Flash_Stop(void) {
+	net_flash = 0;
+	net_flash_lit = 0;
+	Lcd_SymSet(SYM_NET, net_steady);     /* keep it lit if steady mode is on    */
+	if(lock_flash) return;               /* the padlock blink owns the screen;  */
+	                                     /* Lock_Flash() restores it at the end */
+	if(power_on) {
+		Lcd_Flush();
+	}
+	else {
+		Lcd_SetBrightness(LED_BRIGHTNESS_OFF);   /* dark screen; standby follows */
+		Lcd_Flush();
+	}
+}
+
+/* future ZT3L hook: device joined the Zigbee network -> NET on steady forever  */
+static void Net_Set_Steady(uint8_t on) {
+	net_steady = on;
+	if(on) {
+		if(net_flash && !power_on && !lock_flash) {
+			/* provisioning (OFF DOWN hold) finished: keep the display and the   */
+			/* touch keys lit with NET steady for the same time as a normal OFF  */
+			/* key-stay phase (STANDBY_KEYS_SECS), then the 1 s standby tick     */
+			/* fades to the green-leaf-only state (like OFF).                    */
+			net_hold  = STANDBY_KEYS_SECS;
+			off_hold  = 0;
+			/* the same screen a padlock blink restores when it ends here */
+			NetBlink_Screen();
+			Lcd_SymSet(SYM_NET, 1);
+			Lcd_Flush();
+		}
+		net_flash = 0;
+		net_flash_lit = 0;
+	}
+	Lcd_SymSet(SYM_NET, on);
+	if(power_on) Lcd_Flush();
+}
+
+/* Follow the link net status: when the peer reports CONNECTED the NET symbol   */
+/* stops blinking and stays lit (shown while ON); otherwise it is cleared.      */
+void Net_StatusApply(void) {
+	uint8_t conn = (Link_NetStatus() == LNK_NET_CONNECTED) ? 1 : 0;
+
+	if(conn == net_steady) return;
+	Net_Set_Steady(conn);
+}
+
+/* one 10 ms-driven half-phase of the NET blink; call from the main loop.       */
+/* Always drawn OVER the current screen: in OFF it lights the symbol alone on   */
+/* the dark display (like the padlock), in ON it toggles it on the live UI.     */
+void Net_Flash(void) {
+#if !FACTORY_RESET_TEST_EN
+	if(net_steady) return;             /* steady NET owns the symbol */
+#endif
+	if(net_flash) {
+		/* auto-stop after NET_FLASH_SECS, counted on the real 10 ms tick */
+		if((uint16_t)(BTN_Tick10ms() - net_flash_tick) >= NET_FLASH_TICKS) {
+			net_flash_tick = BTN_Tick10ms();
+			net_flash_lit = !net_flash_lit;
+			/* overlay on the live UI while ON, symbol alone on the dark OFF      */
+			/* display; a running padlock blink keeps the screen to itself.       */
+			if(power_on || !lock_flash) {
+				Lcd_SymSet(SYM_NET, net_flash_lit);
+				Lcd_Flush();
+			}
+		}
+	}
+}

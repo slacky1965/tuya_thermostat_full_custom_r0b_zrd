@@ -1,0 +1,43 @@
+# GNU make on Windows/MSYS: $(MAKE) expands to an absolute Windows path
+# ("C:/TelinkSDK/bin/make.exe") which the MSYS /bin/sh used in recipes cannot
+# execute. Recurse by the bare 'make' name so the shell resolves it via PATH.
+MAKE := make
+
+MAKEFLAGS += --no-print-directory
+
+CA51F2_PORT := COM4
+ZT3L_PORT := COM3
+
+subdir_ca51f2 := CA51F253L2
+subdir_tlsr := TLSR8258
+
+DEBUG ?= ON
+
+.PHONY: all subdir_build clean flash-cachip flash-orig-read-cachip flash-orig-write-cachip
+all: subdir_build
+subdir_build:
+	$(MAKE) -C $(subdir_ca51f2) all DEBUG=$(DEBUG)
+	$(MAKE) -C $(subdir_tlsr) all DEBUG=$(DEBUG)
+
+bootloader:
+	$(MAKE) -C $(subdir_tlsr) clean
+	$(MAKE) -C $(subdir_tlsr) -f makefile.bootloader
+
+bootloader-flash:
+	$(MAKE) -C $(subdir_tlsr) PORT=$(ZT3L_PORT) -f makefile.bootloader bootloader-flash
+
+clean:
+	$(MAKE) -C $(subdir_ca51f2) clean
+	$(MAKE) -C $(subdir_tlsr) clean
+	
+flash-cachip:
+	$(MAKE) -C $(subdir_ca51f2) PORT=$(CA51F2_PORT) flash-cachip
+	
+flash-orig-read-cachip:
+	$(MAKE) -C $(subdir_ca51f2) PORT=$(CA51F2_PORT) flash-orig-read-cachip
+
+flash-orig-write-cachip:
+	$(MAKE) -C $(subdir_ca51f2) flash-orig-write-cachip
+
+flash-erase-cachip:
+	$(MAKE) -C $(subdir_ca51f2) flash-erase-cachip
