@@ -81,7 +81,7 @@ $ make bootloader clean all
 Далее жмем на синее облачко и выбираем **custom firmware** и добавляем **ОТА** образ для обновления - [1141-d3a3-1111114b-osrctherm_r0b_zrd_ZT3L.zigbee](https://github.com/slacky1965/tuya_thermostat_full_custom_r0b_zrd/raw/refs/heads/main/bin/1141-d3a3-1111114b-osrctherm_r0b_zrd_ZT3L.zigbee) и жмем обновить.
 
 <div align="center">
-<img src="../doc/images/z2m_update_zt3l_orig.jpg" alt="Добавление OTA-образа в z2m"/>
+<img src="../doc/images/z2m_update_ztu_orig.jpg" alt="Добавление OTA-образа в z2m"/>
 <p align="center"><em>Добавление OTA-образа в z2m</em></p>
 </div>
 
