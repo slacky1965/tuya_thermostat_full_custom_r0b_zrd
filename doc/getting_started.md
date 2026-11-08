@@ -2,8 +2,9 @@
 
 ### Данный проект подходит к термостатам.
 
-- С оригинальной прошивкой они определяются в **z2m** так
+- С оригинальной прошивкой они определяются в **zigbee2mqtt** так
 	- "_TZE204_8byfmxdv"
+	- "_TZE204_jrtvxwvy"
 - Внешний вид
 	- <img src="images/model0b.png"/>
 - Плата
@@ -26,7 +27,7 @@
 Схема слаботочной части взята вот [отсюда](https://blog.softdev.online/index.php?controller=post&action=view&id_post=64).
 
 <div align="center">
-<img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="50%" height="auto" />
+<img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="45%" height="auto" />
 <p align="center"><em>Схема слаботочной части термостата</em></p>
 </div>
 
@@ -76,13 +77,13 @@ $ make bootloader clean all
 
 ### Этап 1. OTA-обновление ZTU
 
-#### Шаг 1. Добавление оригинального термостата в z2m
+#### Шаг 1. Добавление оригинального термостата в zigbee2mqtt
 
 У вас должно получиться что-то типа вот такого
 
 <div align="center">
-<img src="../doc/images/z2m_about_orig.jpg" alt="Оригинальный термостат в z2m"/>
-<p align="center"><em>Оригинальный термостат в z2m</em></p>
+<img src="../doc/images/z2m_about_orig.jpg" alt="Оригинальный термостат в zigbee2mqtt"/>
+<p align="center"><em>Оригинальный термостат в zigbee2mqtt</em></p>
 </div>
 
 #### Шаг 2. Загрузка OTA-образа и запуск обновления
@@ -90,8 +91,8 @@ $ make bootloader clean all
 Далее жмем на синее облачко и выбираем **custom firmware** и добавляем **ОТА** образ для обновления - [1141-d3a3-1111114b-osrctherm_r0b_zrd_ZT3L.zigbee](https://github.com/slacky1965/tuya_thermostat_full_custom_r0b_zrd/raw/refs/heads/main/bin/1141-d3a3-1111114b-osrctherm_r0b_zrd_ZT3L.zigbee) и жмем обновить.
 
 <div align="center">
-<img src="../doc/images/z2m_update_ztu_orig.jpg" alt="Добавление OTA-образа в z2m"/>
-<p align="center"><em>Добавление OTA-образа в z2m</em></p>
+<img src="../doc/images/z2m_update_ztu_orig.jpg" alt="Добавление OTA-образа в zigbee2mqtt"/>
+<p align="center"><em>Добавление OTA-образа в zigbee2mqtt</em></p>
 </div>
 
 #### Шаг 3. Проверка лога и результата
@@ -117,11 +118,11 @@ $ make bootloader clean all
 <p align="center"><em>Лог: обновление завершено</em></p>
 </div>
 
-После успешного обновления нужно разрешить добавление новых устройств в z2m и термостат сам подключится к сети уже с новым именем и адресом. Старую версию термостата принудительно удаляем. У вас должно получиться что-то в этом роде.
+После успешного обновления нужно разрешить добавление новых устройств в zigbee2mqtt и термостат сам подключится к сети уже с новым именем и адресом. Старую версию термостата принудительно удаляем. У вас должно получиться что-то в этом роде.
 
 <div align="center">
-<img src="../doc/images/z2m_about.jpg" alt="Термостат после обновления в z2m"/>
-<p align="center"><em>Термостат после обновления в z2m</em></p>
+<img src="../doc/images/z2m_about.jpg" alt="Термостат после обновления в zigbee2mqtt"/>
+<p align="center"><em>Термостат после обновления в zigbee2mqtt</em></p>
 </div>
 
 ### Этап 2. Прошивка CA51F253L2
