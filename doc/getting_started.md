@@ -125,8 +125,8 @@ $ make bootloader clean all
 Нужно аккуратно тонкой шлитцевой отвертой вынуть экран из общего корпуса (он на разъеме). Затем открутить четыре маленьких винтика по углам и вынуть из корпуса слаботочную плату с экраном. На ней нужно найти место с нераспаянным разъемом без маркировки. Далее подключаем к **USB-UART** адаптеру согласно надписям на фото ниже - контакт **RX** на плате нужно подключать к **RX** адаптера, контакт **TX** на плате - к **TX** адаптера. Также подключаем **GND**, а вот **3v3** пока не подключаем.
 
 <div align="center">
-<img src="../doc/images/board_uart.jpg" alt="Подключение USB-UART к разъему J1"/>
-<p align="center"><em>Подключение <b>USB-UART</b> к разъему <b>J1</b></em></p>
+<img src="../doc/images/board_uart.jpg" alt="Подключение USB-UART к разъему программирования"/>
+<p align="center"><em>Подключение <b>USB-UART</b> к разъему программирования</em></p>
 </div>
 
 Предварительно проверяем, на каком порту сидит **USB-UART** адаптер и редактируем в корне проекта в **makefile** параметр **CA51F2_PORT** на тот, который у вас.
@@ -156,7 +156,7 @@ $ make flash-cachip
 <summary>Пример вывода команды <b>make flash-cachip</b></summary>
 
 ```text
-py ./tools/cachip-isp-serial_new.py COM4 upload ../bin/osrctherm_r01_v1.01_CA51F253L2.bin
+py ./tools/cachip-isp-serial_new.py COM4 upload ../bin/osrctherm_r0b_v1.01_CA51F253L2.bin
 using embedded phase1 bootloader (642 bytes)
 opening serial port COM4
 trying ISP-mode activation, waiting up to 15 seconds (if power is already applied, pulse RESET pin 2 low->high !)
@@ -184,9 +184,9 @@ requesting access to flash with designated chipID
 got mcu success response
 requesting onchip flash memory partial 243 sectors erase
 got mcu success response
-uploading from ../bin/osrctherm_r01_v1.01_CA51F253L2.bin to onchip memory
-written 31010/31010 bytes (100%)
-upload done: 31010 bytes written to onchip flash
+uploading from ../bin/osrctherm_r0b_v1.01_CA51F253L2.bin to onchip memory
+written 31351/31351 bytes (100%)
+upload done: 31351 bytes written to onchip flash
 sending session end cmd
 got mcu success response
 end, remove power from MCU
