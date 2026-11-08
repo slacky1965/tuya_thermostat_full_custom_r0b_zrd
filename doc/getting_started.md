@@ -26,7 +26,7 @@
 Схема слаботочной части взята вот [отсюда](https://blog.softdev.online/index.php?controller=post&action=view&id_post=64).
 
 <div align="center">
-<img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="20%" height="auto" />
+<img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="50%" height="auto" />
 <p align="center"><em>Схема слаботочной части термостата</em></p>
 </div>
 
