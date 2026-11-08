@@ -369,7 +369,7 @@
 
 ## 9. Как это выглядит в zigbee2mqtt
 
-<img src="doc/images/z2m-exposes.jpg"/>
+<img src="doc/images/z2m_exposes.jpg"/>
 
 
 ## 10. Назначение ОТА файлов.
