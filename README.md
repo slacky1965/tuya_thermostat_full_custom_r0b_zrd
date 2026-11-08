@@ -29,7 +29,7 @@
 
 ## 1. Дисплей
 
-<img src="doc/images/model01.png"/>
+<img src="doc/images/model0b.png"/>
 
 <img src="doc/images/thermostat_screen.jpg"/>
 
