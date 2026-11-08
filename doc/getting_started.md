@@ -1,5 +1,7 @@
 # Термостат: железо и прошивка
 
+Все материалы по железу взяты вот [отсюда](https://blog.softdev.online/index.php?controller=post&action=view&id_post=64).
+
 ### Данный проект подходит к термостатам.
 
 - С оригинальной прошивкой они определяются в **zigbee2mqtt** так
@@ -23,8 +25,6 @@
 ## 1. Железо
 
 ### Схема термостата
-
-Схема слаботочной части взята вот [отсюда](https://blog.softdev.online/index.php?controller=post&action=view&id_post=64).
 
 <div align="center">
 <img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="45%" height="auto" />
