@@ -145,19 +145,13 @@ static uint8_t xdata set_need_save;          /* arrows changed the setpoint:    
 
 /* Clock-set mode state and constants live in src/clock_mode.c;    */
 /* CLK_SET_* and the entry points are declared in include/modes.h. */
+/* One MENU hold (3.0 s) feeds both targets: clock-set while ON,    */
+/* the settings menu while OFF (entry gesture of the original      */
+/* thermostat); the target is picked when the arm fires in the      */
+/* main loop.                                                       */
 #define CLK_ENTER_10MS_TICKS  300           /* 3.0 s MENU hold to enter         */
 static uint8_t xdata clk_arm;               /* 1 = MENU hold being measured     */
 static uint16_t xdata clk_arm_tick;         /* tick10ms when the hold was armed */
-
-
-/* Menu entry threshold and the MENU-hold arm stay in main.c: the  */
-/* key handler owns them (modes.h declares the mode entry points). */
-/* Entry into the settings menu is deferred on r0b: the arming arm  */
-/* below is not raised, Menu_Enter() stays reachable only for       */
-/* future re-enable (MENU hold goes to clock-set instead).          */
-#define MENU_ENTER_10MS_TICKS  300          /* 3.0 s MENU hold to enter         */
-static uint8_t xdata menu_arm;              /* 1 = MENU hold being measured     */
-static uint16_t xdata menu_arm_tick;        /* tick10ms when the hold was armed */
 
 /* Power (leaf) key: a >= 1.2 s hold toggles the thermostat, so a single tap    */
 /* cannot turn it on/off by accident. The constant is the TOTAL hold time from  */
@@ -168,17 +162,16 @@ static uint8_t xdata pwr_arm;               /* 1 = POWER hold being measured    
 static uint16_t xdata pwr_arm_tick;         /* tick10ms when the hold was armed */
 static bit pwr_arm_power;                   /* power state when the arm was set */
 
-/* Every long-press constant above (CLK_ENTER / MENU_ENTER / NET_HOLD /          */
-/* PWR_TOGGLE) is the TOTAL hold time measured from the initial press. An arm is */
+/* Every long-press constant above (CLK_ENTER / NET_HOLD /                        */
+/* PWR_TOGGLE) is the TOTAL hold time measured from the initial press. An arm is  */
 /* raised when BTN_EVT_HOLD arrives - BTN_HOLD_10MS_TICKS after the press - so   */
 /* the arm comparisons use the post-HOLD remainder derived once here instead of  */
 /* re-adding or eyeballing the offset at every call site.                        */
 #define ARM_TICKS_AFTER_HOLD  BTN_HOLD_10MS_TICKS
 #define CLK_ARM_TICKS   (CLK_ENTER_10MS_TICKS - ARM_TICKS_AFTER_HOLD)
-#define MENU_ARM_TICKS  (MENU_ENTER_10MS_TICKS - ARM_TICKS_AFTER_HOLD)
 #define NET_ARM_TICKS   (NET_HOLD_10MS_TICKS - ARM_TICKS_AFTER_HOLD)
 #define PWR_ARM_TICKS   (PWR_TOGGLE_10MS_TICKS - ARM_TICKS_AFTER_HOLD)
-#if (CLK_ARM_TICKS < 1) || (MENU_ARM_TICKS < 1) || (NET_ARM_TICKS < 1) || (PWR_ARM_TICKS < 1)
+#if (CLK_ARM_TICKS < 1) || (NET_ARM_TICKS < 1) || (PWR_ARM_TICKS < 1)
 #error Long-press arms must stay longer than the HOLD event itself
 #endif
 
@@ -695,18 +688,16 @@ if(!Ota_IsPending()) Temp_ErPoll();
 				continue;
 			}
 
-			/* 0c. enter clock-set: MENU key held >= 3 s while ON. The first    */
-			/* HOLD (0.5 s) only arms the measurement (see the main loop).       */
-			/* (On r0b MENU hold replaces the r01 CLOCK hold; the settings-menu  */
-			/* entry that used to share this key is deferred.)                  */
-			if(b == BTN_MENU && ev == BTN_EVT_HOLD && power_on && !clk_arm) {
+			/* 0c. MENU key held >= 3 s: ON -> clock-set, OFF -> settings menu   */
+			/* (the entry gesture of the original thermostat). The first HOLD    */
+			/* (0.5 s) only arms the measurement; the target is picked when the   */
+			/* arm fires in the main loop, so the hold is armed regardless of the */
+			/* power state.                                                       */
+			if(b == BTN_MENU && ev == BTN_EVT_HOLD && !clk_arm) {
 				clk_arm = 1;
 				clk_arm_tick = BTN_Tick10ms();
 				continue;
 			}
-
-			/* 0d. settings-menu entry (MENU hold) is deferred on r0b: the arm  */
-			/* is never raised here, so Menu_Enter() stays unreachable.         */
 
 			/* any press event while ON restarts the max-brightness window (CLICK,   */
 			/* HOLD, RPT, even RELEASE - all extend it).                             */
@@ -727,19 +718,6 @@ if(!Ota_IsPending()) Temp_ErPoll();
 				pwr_arm_power = power_on;      /* a remote SystemMode that arrives  */
 				pwr_arm_tick = BTN_Tick10ms(); /* during the hold must not be       */
 				continue;                      /* toggled back by this arm          */
-			}
-
-			/* Chord 2: POWER+MENU held >= 2 s while ON -> enter the settings menu. */
-			/* Placed AFTER the mode dispatch: an open mode owns the keys and       */
-			/* swallows this event, so the handler only ever runs on a free screen. */
-			/* The keypad-lock filter sits before it, so a locked panel ignores the  */
-			/* gesture (menu entry by keys was never allowed while locked).         */
-			if(b == BTN_CHORD2 && ev == BTN_EVT_CHORD2) {
-				if(power_on) {
-					Menu_Enter();
-					DEBUG(BUTTONS_EN, { debug_puts("menu chord\r\n"); });
-				}
-				continue;
 			}
 
 			/* a) MENU single press (power-on) -> manual <-> schedule mode.      */
@@ -953,39 +931,29 @@ if(!Ota_IsPending()) Temp_ErPoll();
 		Net_StatusApply();         /* joined -> NET steady (follows the link) */
 		Clock_Set_Tick();          /* clock-set blink + no-key auto-exit      */
 
-		/* MENU held >= 3 s while ON -> enter clock-set mode. Yields to chord 2  */
-		/* (POWER+MENU): while both chord keys are down the run is abandoned,    */
-		/* so a staggered chord press cannot open the clock instead of the menu. */
+		/* MENU held >= 3 s: while ON -> clock-set, while OFF -> settings menu  */
+		/* (the entry gesture of the original thermostat). The OFF entry forces */
+		/* the display to maximum brightness for the whole menu session: the 1  */
+		/* brightness tick never touches a dark screen and every menu exit path */
+		/* ends in Thermo_Apply, which restores the standby picture.            */
 		if(clk_arm) {
-			if(power_on && Btn_ActionAllowed(BTN_MENU) &&
-			   clk_set == CLK_SET_OFF && Screen_ModeFree() &&
-			   BTN_IsDown(BTN_MENU) &&
-			   !(BTN_IsDown(BTN_CHORD2_A) && BTN_IsDown(BTN_CHORD2_B))) {
+			if(Btn_ActionAllowed(BTN_MENU) && Screen_ModeFree() &&
+			   BTN_IsDown(BTN_MENU)) {
 				if((uint16_t)(BTN_Tick10ms() - clk_arm_tick) >= CLK_ARM_TICKS) {
 					clk_arm = 0;
-					Clock_Set_Enter();
-					DEBUG(BUTTONS_EN, { debug_puts("clock set\r\n"); });
+					if(power_on) {
+						Clock_Set_Enter();
+						DEBUG(BUTTONS_EN, { debug_puts("clock set\r\n"); });
+					}
+					else {
+						Bright_Apply(LED_BRIGHTNESS_MAX);
+						Menu_Enter();
+						DEBUG(BUTTONS_EN, { debug_puts("menu off\r\n"); });
+					}
 				}
 			}
 			else {
 				clk_arm = 0;       /* released / not applicable: abandon */
-			}
-		}
-
-		/* Settings-menu entry (MENU hold >= 3 s -> Menu_Enter) is deferred on   */
-		/* r0b: menu_arm is never raised (see the key drain), so this block      */
-		/* stays idle; Menu_Exit paths remain for remote/full-lock cleanup.      */
-		if(menu_arm) {
-			if(power_on && Btn_ActionAllowed(BTN_MENU) && Screen_ModeFree() &&
-			   BTN_IsDown(BTN_MENU)) {
-				if((uint16_t)(BTN_Tick10ms() - menu_arm_tick) >= MENU_ARM_TICKS) {
-					menu_arm = 0;
-					Menu_Enter();
-					DEBUG(BUTTONS_EN, { debug_puts("menu set\r\n"); });
-				}
-			}
-			else {
-				menu_arm = 0;      /* released / not applicable: abandon */
 			}
 		}
 
@@ -1010,13 +978,10 @@ if(!Ota_IsPending()) Temp_ErPoll();
 		/* leaf held >= PWR_TOGGLE_10MS_TICKS (total, from the press) -> toggle.   */
 		/* Re-authorized: the lock AND the power state are re-checked, so neither  */
 		/* a remote lock (0x17) nor a remote SystemMode during the hold can make   */
-		/* the arm toggle the state back. It also yields to chord 2: while BOTH    */
-		/* POWER+MENU are down the run is abandoned (the 1.2 s toggle would        */
-		/* otherwise fire before the 2.0 s menu chord).                            */
+		/* the arm toggle the state back.                                          */
 		if(pwr_arm) {
 			if(Btn_ActionAllowed(BTN_POWER) && (power_on == pwr_arm_power) &&
-			   BTN_IsDown(BTN_POWER) &&
-			   !(BTN_IsDown(BTN_CHORD2_A) && BTN_IsDown(BTN_CHORD2_B))) {
+			   BTN_IsDown(BTN_POWER)) {
 			if((uint16_t)(BTN_Tick10ms() - pwr_arm_tick) >= PWR_ARM_TICKS) {
 				pwr_arm = 0;
 				/* Persist the ZCL system mode (OFF/HEAT) with every toggle so a  */
@@ -1132,10 +1097,17 @@ if(!Ota_IsPending()) Temp_ErPoll();
 				}
 			}
 			else {
-				/* standby: finish the touch-key stay phase, drop to the green leaf */
-				/* (frozen while the padlock or NET blink owns the display:         */
-				/* nothing may touch the display brightness mid-flash)              */
-				if(lock_flash || net_flash) {
+				/* standby: an OFF-side mode (the settings menu) owns the        */
+				/* display - neither the key-stay countdowns nor the green-leaf  */
+				/* repaint may touch it. Without this gate the expiring off_hold */
+				/* issued Thermo_Apply (dark panel) a few seconds after the menu  */
+				/* entry and Standby_GreenApply dropped the brightness every     */
+				/* second after that. The countdowns stay frozen while the menu   */
+				/* is open and resume after Menu_Exit -> Thermo_Apply.            */
+				if(!Screen_ModeFree()) {
+					/* menu owns the display: leave everything alone            */
+				}
+				else if(lock_flash || net_flash) {
 					/* blink in progress: leave the display to its driver */
 				}
 				else if(net_hold) {

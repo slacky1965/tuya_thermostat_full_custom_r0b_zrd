@@ -1,11 +1,14 @@
 # Термостат: железо и прошивка
 
+Все материалы по железу взяты вот [отсюда](https://blog.softdev.online/index.php?controller=post&action=view&id_post=64).
+
 ### Данный проект подходит к термостатам.
 
-- С оригинальной прошивкой они определяются в **z2m** так
+- С оригинальной прошивкой они определяются в **zigbee2mqtt** так
 	- "_TZE204_8byfmxdv"
+	- "_TZE204_jrtvxwvy"
 - Внешний вид
-	- <img src="images/model01.png"/>
+	- <img src="images/model0b.png"/>
 - Плата
 	- Смотри в разделе [Железо](#1-железо)
 	
@@ -14,18 +17,25 @@
 - [1. Железо](#1-железо)
 - [2. Сборка проекта](#2-сборка-проекта)
 - [3. Как обновить](#3-как-обновить)
-  - [Этап 1. OTA-обновление ZT3L](#этап-1-ota-обновление-zt3l)
+  - [Этап 1. OTA-обновление ZTU](#этап-1-ota-обновление-zt3l)
   - [Этап 2. Прошивка CA51F253L2](#этап-2-прошивка-ca51f253l2)
 
 ---
 
 ## 1. Железо
 
+### Схема термостата
+
+<div align="center">
+<img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="45%" height="auto" />
+<p align="center"><em>Схема слаботочной части термостата</em></p>
+</div>
+
 ### Слаботочная плата термостата с экраном
 
 <div align="center">
-<img src="../doc/images/board_bottom.jpg" alt="Слаботочная плата, вид снизу" width="50%" height="auto" />
-<p align="center"><em>Слаботочная плата: вид снизу</em></p>
+<img src="../doc/images/board_top.jpg" alt="Слаботочная плата, вид сверху" width="20%" height="auto"> <img src="../doc/images/board_bottom.jpg" alt="Слаботочная плата, вид снизу" width="20%" height="auto" />
+<p align="center"><em>Слаботочная плата: вид сверху и вид снизу</em></p>
 </div>
 
 ---
@@ -63,17 +73,17 @@ $ make bootloader clean all
 
 Сразу скажу, обновить **CA51F253L2** по ОТА из оригинальной прошивки в кастомную нельзя. В протоколе Tuya есть такой механизм, но проектировщики этого термостата не реализовали такую возможность. Но с другой стороны, для перепрошивки **CA51F253L2** не нужен какой-то отдельный программатор. Достаточно обычного **USB-UART** адаптера.
 
-Итак. Обновление будет происходить в два этапа. Сначала по **ОТА** обновляем zigbee-модуль ZT3L. А затем мы уже прошьем проводами **CA51F253L2**.
+Итак. Обновление будет происходить в два этапа. Сначала по **ОТА** обновляем zigbee-модуль ZTU. А затем мы уже прошьем проводами **CA51F253L2**.
 
-### Этап 1. OTA-обновление ZT3L
+### Этап 1. OTA-обновление ZTU
 
-#### Шаг 1. Добавление оригинального термостата в z2m
+#### Шаг 1. Добавление оригинального термостата в zigbee2mqtt
 
 У вас должно получиться что-то типа вот такого
 
 <div align="center">
-<img src="../doc/images/z2m_about_orig.jpg" alt="Оригинальный термостат в z2m"/>
-<p align="center"><em>Оригинальный термостат в z2m</em></p>
+<img src="../doc/images/z2m_about_orig.jpg" alt="Оригинальный термостат в zigbee2mqtt"/>
+<p align="center"><em>Оригинальный термостат в zigbee2mqtt</em></p>
 </div>
 
 #### Шаг 2. Загрузка OTA-образа и запуск обновления
@@ -81,8 +91,8 @@ $ make bootloader clean all
 Далее жмем на синее облачко и выбираем **custom firmware** и добавляем **ОТА** образ для обновления - [1141-d3a3-1111114b-osrctherm_r0b_zrd_ZT3L.zigbee](https://github.com/slacky1965/tuya_thermostat_full_custom_r0b_zrd/raw/refs/heads/main/bin/1141-d3a3-1111114b-osrctherm_r0b_zrd_ZT3L.zigbee) и жмем обновить.
 
 <div align="center">
-<img src="../doc/images/z2m_update_zt3l_orig.jpg" alt="Добавление OTA-образа в z2m"/>
-<p align="center"><em>Добавление OTA-образа в z2m</em></p>
+<img src="../doc/images/z2m_update_ztu_orig.jpg" alt="Добавление OTA-образа в zigbee2mqtt"/>
+<p align="center"><em>Добавление OTA-образа в zigbee2mqtt</em></p>
 </div>
 
 #### Шаг 3. Проверка лога и результата
@@ -108,11 +118,11 @@ $ make bootloader clean all
 <p align="center"><em>Лог: обновление завершено</em></p>
 </div>
 
-После успешного обновления нужно разрешить добавление новых устройств в z2m и термостат сам подключится к сети уже с новым именем и адресом. Старую версию термостата принудительно удаляем. У вас должно получиться что-то в этом роде.
+После успешного обновления нужно разрешить добавление новых устройств в zigbee2mqtt и термостат сам подключится к сети уже с новым именем и адресом. Старую версию термостата принудительно удаляем. У вас должно получиться что-то в этом роде.
 
 <div align="center">
-<img src="../doc/images/z2m_about.jpg" alt="Термостат после обновления в z2m"/>
-<p align="center"><em>Термостат после обновления в z2m</em></p>
+<img src="../doc/images/z2m_about.jpg" alt="Термостат после обновления в zigbee2mqtt"/>
+<p align="center"><em>Термостат после обновления в zigbee2mqtt</em></p>
 </div>
 
 ### Этап 2. Прошивка CA51F253L2
@@ -122,11 +132,11 @@ $ make bootloader clean all
 > [!WARNING]
 > Внимание!!! При отсоединенной слаботочной плате нельзя подавать питание на силовую часть термостата!!!
 
-Нужно сдвинуть в сторону экран, отсоединить разъем и открутив 4 небольших самореза достать слаботочную плату. На ней нужно найти место с нераспаянным разъемом **J1**. Далее подключаем к **USB-UART** адаптеру согласно надписям на фото ниже - контакт **RX** на плате нужно подключать к **RX** адаптера, контакт **TX** на плате - к **TX** адаптера. Также подключаем **GND**, а вот **3v3** пока не подключаем.
+Нужно аккуратно тонкой шлитцевой отвертой вынуть экран из общего корпуса (он на разъеме). Затем открутить четыре маленьких винтика по углам и вынуть из корпуса слаботочную плату с экраном. На ней нужно найти место с нераспаянным разъемом без маркировки. Далее подключаем к **USB-UART** адаптеру согласно надписям на фото ниже - контакт **RX** на плате нужно подключать к **RX** адаптера, контакт **TX** на плате - к **TX** адаптера. Также подключаем **GND**, а вот **3v3** пока не подключаем.
 
 <div align="center">
-<img src="../doc/images/board_uart.jpg" alt="Подключение USB-UART к разъему J1"/>
-<p align="center"><em>Подключение <b>USB-UART</b> к разъему <b>J1</b></em></p>
+<img src="../doc/images/board_uart.jpg" alt="Подключение USB-UART к разъему программирования"/>
+<p align="center"><em>Подключение <b>USB-UART</b> к разъему программирования</em></p>
 </div>
 
 Предварительно проверяем, на каком порту сидит **USB-UART** адаптер и редактируем в корне проекта в **makefile** параметр **CA51F2_PORT** на тот, который у вас.
@@ -156,7 +166,7 @@ $ make flash-cachip
 <summary>Пример вывода команды <b>make flash-cachip</b></summary>
 
 ```text
-py ./tools/cachip-isp-serial_new.py COM4 upload ../bin/osrctherm_r01_v1.01_CA51F253L2.bin
+py ./tools/cachip-isp-serial_new.py COM4 upload ../bin/osrctherm_r0b_v1.01_CA51F253L2.bin
 using embedded phase1 bootloader (642 bytes)
 opening serial port COM4
 trying ISP-mode activation, waiting up to 15 seconds (if power is already applied, pulse RESET pin 2 low->high !)
@@ -184,9 +194,9 @@ requesting access to flash with designated chipID
 got mcu success response
 requesting onchip flash memory partial 243 sectors erase
 got mcu success response
-uploading from ../bin/osrctherm_r01_v1.01_CA51F253L2.bin to onchip memory
-written 31010/31010 bytes (100%)
-upload done: 31010 bytes written to onchip flash
+uploading from ../bin/osrctherm_r0b_v1.01_CA51F253L2.bin to onchip memory
+written 31351/31351 bytes (100%)
+upload done: 31351 bytes written to onchip flash
 sending session end cmd
 got mcu success response
 end, remove power from MCU

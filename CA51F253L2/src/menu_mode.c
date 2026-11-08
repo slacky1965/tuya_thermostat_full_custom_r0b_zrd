@@ -12,8 +12,11 @@
 /* Settings menu: one descriptor table + one get/set pair. Item order and    */
 /* behaviour are unchanged from the pre-split main.c.                        */
 
-/* Settings menu (entered by holding MENU >= 3 s while ON). Item number is shown */
-/* in the hours digits, the value in the big temperature digits. MENU click      */
+/* Settings menu: entered by holding MENU >= 3 s while OFF (the original       */
+/* thermostat gesture); the entry forces maximum brightness for the session.    */
+/* Item number is shown in the hours digits, the value in the big temperature   */
+/* digits. The SET symbol stays lit for the whole session, the degC unit joins */
+/* it only for temperature items (calibration, deadband, limits). MENU click     */
 /* advances (saving the previous item if it changed); UP/DOWN edit; POWER saves  */
 /* and exits (the thermostat is NOT turned off); 20 s of no keys exits too.      */
 uint8_t xdata menu_set;              /* MENU_OFF / MENU_ON                */
@@ -181,11 +184,19 @@ static void Menu_Commit(void) {
 
 void Menu_Draw(void) {
 	uint8_t n = (uint8_t)(menu_idx + 1);
+	uint8_t kind = menu_items[menu_idx].kind;
 
 	Lcd_Clear();
 	Lcd_DigitIdx(6, (uint8_t)(n / 10));    /* item number in the minutes digits */
 	Lcd_DigitIdx(7, (uint8_t)(n % 10));
-    switch (menu_items[menu_idx].kind) {
+	/* Owner spec: SET is lit for the whole menu session; the degC unit is     */
+	/* shown only for temperature-related items (calibration, deadband,        */
+	/* limits) - brightness/lock/sensor/reset show a plain number or letters.  */
+	Lcd_SymSet(SYM_SET, 1);
+	Lcd_SymSet(SYM_DEGC, (uint8_t)(kind == MENU_KIND_TEMP10 ||
+	                               kind == MENU_KIND_DEADBAND ||
+	                               kind == MENU_KIND_LIMIT));
+    switch (kind) {
         case MENU_KIND_TEMP10:
         case MENU_KIND_DEADBAND:
             Lcd_MenuValue((int16_t) (((uint16_t) menu_val << 3) + ((uint16_t) menu_val << 1)));

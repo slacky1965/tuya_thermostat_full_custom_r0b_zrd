@@ -16,27 +16,23 @@ static uint16_t xdata relay_off_secs; /* seconds spent OFF, saturating at the   
 static uint8_t xdata relay_pulse;     /* 0 = idle, 1 = ON impulse, 2 = OFF one   */
 static uint8_t xdata relay_boot_off;  /* 1 = force OPEN impulse at first poll   */
 static uint16_t xdata relay_pulse_tick;
-/* llc (mcs51-llvm) cannot select a constant i8<1> store into a bit cell: the   */
-/* SETB pattern only forms when the value comes from memory, while CLR (store 0) */
-/* selects fine. The scratch is volatile, so LLVM must reload it and the coil    */
-/* pin store value is never a constant - see doc_local/llc-bug-constant-store.  */
-static volatile uint8_t xdata coil_lvl;
 /********************************************************************************/
 /* Issue a single coil impulse on the matching side (RELAY_PULSE_10MS HIGH).    */
 /* Both pins are dropped FIRST, so the two sides can never be energized together */
-/* (datasheet) even when impulses overlap. A constant HIGH is deliberately not   */
-/* used: the FH14L coil (250 mW) is specified for impulse duty only.             */
+/* (datasheet) even when impulses overlap. Constant 1 stores into the coil pins  */
+/* are written directly: the llc constant-store bug they once needed a volatile  */
+/* scratch for is fixed in the current toolchain (see                          */
+/* doc_local/llc-bug-constant-store.md).                                        */
 static void Relay_Pulse(uint8_t on) {
-	coil_lvl = 1;
 	RELAY_ON_PIN = 0;
 	RELAY_OFF_PIN = 0;
 	if(on) {
-		RELAY_ON_PIN = coil_lvl;
-		relay_pulse = coil_lvl;
+		RELAY_ON_PIN = 1;
+		relay_pulse = 1;
 	}
 	else {
-		RELAY_OFF_PIN = coil_lvl;
-		relay_pulse = (uint8_t)(coil_lvl + 1);   /* 2 = OFF impulse */
+		RELAY_OFF_PIN = 1;
+		relay_pulse = 2;
 	}
 	relay_pulse_tick = BTN_Tick10ms();
 }
