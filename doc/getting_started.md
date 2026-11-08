@@ -5,7 +5,7 @@
 - С оригинальной прошивкой они определяются в **z2m** так
 	- "_TZE204_8byfmxdv"
 - Внешний вид
-	- <img src="images/model01.png"/>
+	- <img src="images/model0b.png"/>
 - Плата
 	- Смотри в разделе [Железо](#1-железо)
 	
@@ -21,11 +21,20 @@
 
 ## 1. Железо
 
+### Схема термостата
+
+Схема слаботочной части взята вот [отсюда](https://blog.softdev.online/index.php?controller=post&action=view&id_post=64).
+
+<div align="center">
+<img src="../doc/images/schematic_low.jpg" alt="Схема слаботочной части термостата" width="20%" height="auto" />
+<p align="center"><em>Схема слаботочной части термостата</em></p>
+</div>
+
 ### Слаботочная плата термостата с экраном
 
 <div align="center">
-<img src="../doc/images/board_bottom.jpg" alt="Слаботочная плата, вид снизу" width="50%" height="auto" />
-<p align="center"><em>Слаботочная плата: вид снизу</em></p>
+<img src="../doc/images/board_top.jpg" alt="Слаботочная плата, вид сверху" width="20%" height="auto"> <img src="../doc/images/board_bottom.jpg" alt="Слаботочная плата, вид снизу" width="20%" height="auto" />
+<p align="center"><em>Слаботочная плата: вид сверху и вид снизу</em></p>
 </div>
 
 ---
