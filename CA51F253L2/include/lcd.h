@@ -82,6 +82,7 @@ enum
 
 void Lcd_Init(void);                            /* pins + controller (LCD mode, ~64 Hz)   */
 void Lcd_Clear(void);                           /* zero shadow buffer + flush              */
+void Lcd_ClearBuf(void);                        /* zero shadow buffer only (no flush)      */
 void Lcd_Flush(void);                           /* shadow buffer -> LCD RAM                */
 void Lcd_WriteCell(uint8_t cell, uint8_t val);  /* one cell of the shadow buffer (no flush)*/
 void Lcd_SetBrightness(uint8_t level);          /* 0 = off, 1..8 = UI level           */

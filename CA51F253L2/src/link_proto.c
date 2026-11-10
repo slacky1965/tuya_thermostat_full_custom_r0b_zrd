@@ -487,6 +487,7 @@ static void h_sched(link_ctx_t xdata *cx) {
 	{
 		uint8_t changed = 0;
 		uint8_t sorted;
+		uint8_t dayno = (uint8_t)(f->cmd - LNK_CMD_SCHED_MON);
 
 		for(i = 0; i < LNK_SCHED_N; i++) {
 			uint16_t t = lnk_get16(pay + i * LNK_SCHED_ENTRY);
@@ -510,7 +511,13 @@ static void h_sched(link_ctx_t xdata *cx) {
 			return;
 		}
 		if(sorted) {
-			sched_send_mask |= (uint8_t)(1U << (f->cmd - LNK_CMD_SCHED_MON));
+			sched_send_mask |= (uint8_t)(1U << dayno);
+		}
+		if(changed || sorted) {
+			/* the stored day changed under a possibly open editor: close it  */
+			/* without Store, so stale slot registers cannot overwrite the    */
+			/* network value (the network wins).                              */
+			Sched_NetPreempt(dayno);
 		}
 	}
 }
@@ -1090,12 +1097,9 @@ void Link_SendLog(const uint8_t xdata *line, uint8_t len) {
 }
 /********************************************************************************/
 /* Build and send one state-dump frame (step 0..LNK_DUMP_N-1) as a report.      */
-/* SDCC 4.6 has no #pragma enable_warning, so this disable lasts to the end of  */
-/* the file: it covers link_dump_send AND h_setting, both dense switches whose  */
-/* warning 110 ("conditional flow changed by optimizer") is harmless. Keep any  */
-/* future code that must be warning-checked ABOVE this point.                   */
+/* (SDCC used to need a `#pragma disable_warning 110` from here down for the    */
+/* dense switches below; the clang toolchain has no such warning.)              */
 /********************************************************************************/
-#pragma disable_warning 110
 typedef struct {
 	uint8_t off;
 	uint8_t kind;       /* 0 = wire u8, 1 = wire i8, 2 = wire i16             */
