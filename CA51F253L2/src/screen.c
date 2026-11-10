@@ -266,22 +266,14 @@ bit ext_ok;      /* 1 = external probe present (SYM_HEATER)              */
 /* programmed day (weekly-curve rule, up to 7 days back; see Sched_FindActive). */
 /* Every house is off in manual mode or when the whole week is empty. The       */
 /* editing screens (sched_mode) draw the edited slot themselves - this helper   */
-/* only runs while no mode owns the screen. Uses the SAME resolver as the        */
-/* active setpoint, so the icon can never disagree with the control.            */
+/* only runs while no mode owns the screen. The slot index comes from the CACHE */
+/* published by Sched_ActiveSetpoint (the same resolver that drives control),   */
+/* so the icon can never disagree with the heating.                             */
 void Sched_SlotApply(void) {
 	XDATA_TMP(uint8_t, h);
 	XDATA_TMP(uint8_t, m);
 	XDATA_TMP(uint8_t, wd);
-	/* day/idx are written THROUGH pointers by Sched_FindActive: they MUST be */
-	/* xdata statics (XDATA_TMP), the codebase rule for every pointer target   */
-	/* (BTN_GetEvent(&b), RTC_ReadTime(&h..), MDU temporaries). Plain stack    */
-	/* automatics here produced garbage (day=12/idx=6 - impossible ranges): the */
-	/* pointer stores did not land and the slots held RTC_ReadTime leftovers;   */
-	/* idx=6 then mapped to SYM_PM (no-op) -> no house ever lit.                */
-	XDATA_TMP(uint8_t, day);
-	XDATA_TMP(uint8_t, idx);
 	uint8_t i;
-	uint8_t found;
 
 	for(i = 0; i < LNK_SCHED_N; i++) {
 		Lcd_SymSet((uint8_t)(SYM_SP1 + i), 0);
@@ -291,12 +283,11 @@ void Sched_SlotApply(void) {
 		DEBUG(BUTTONS_EN, { debug_puts("slot manual\r\n"); });
 		return;
 	}
-	found = Sched_FindActive(&day, &idx);
-	if(found) {
-		Lcd_SymSet((uint8_t)(SYM_SP1 + idx), 1);
+	if(sched_slot_now != 0) {
+		Lcd_SymSet((uint8_t)(SYM_SP1 + sched_slot_now - 1), 1);
 	}
-	/* ONE line per second: input (wd, now) + resolver pick. Two separate     */
-	/* lines do NOT work here - debug.c keeps a single pending line and the   */
+	/* ONE line per second: input (wd, now) + the cached pick. Two separate    */
+	/* lines do NOT work here - debug.c keeps a single pending line and the    */
 	/* second one (issued before Debug_Poll ships the first) is always dropped.*/
 	RTC_ReadTime(&h, &m, 0, &wd);
 	DEBUG(BUTTONS_EN, {
@@ -304,11 +295,9 @@ void Sched_SlotApply(void) {
 		debug_dec(wd);
 		debug_puts(" now=");
 		debug_dec((uint16_t)h * 60 + m);
-		if(found) {
-			debug_puts(" -> day=");
-			debug_dec(day);
-			debug_puts(" idx=");
-			debug_dec(idx);
+		if(sched_slot_now != 0) {
+			debug_puts(" -> slot=");
+			debug_dec(sched_slot_now);
 		}
 		else {
 			debug_puts(" -> none");

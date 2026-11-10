@@ -201,6 +201,19 @@ void Lcd_Clear(void) {
 	Lcd_Flush();
 }
 
+/* Zero the shadow buffer WITHOUT pushing it to the panel. A caller that draws  */
+/* a whole screen right after must use this instead of Lcd_Clear(): the latter */
+/* flushes the empty frame itself, and in a periodic repaint (the schedule     */
+/* editor blinks its field twice a second) that shows up as the whole screen   */
+/* blanking for a frame - "cleared and redrawn" flicker.                      */
+void Lcd_ClearBuf(void) {
+	uint8_t i;
+
+	for(i = 0; i < LCD_CELLS; i++) {
+		lcd_buf[i] = 0;
+	}
+}
+
 void Lcd_WriteCell(uint8_t cell, uint8_t val) {
 #if LCD_DRAW_ENABLE
 	lcd_buf[cell] = (uint8_t)(val & LCD_SEG_ALL);

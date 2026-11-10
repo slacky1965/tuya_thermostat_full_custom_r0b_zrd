@@ -35,6 +35,16 @@ void Sched_Set_Store(void);
 void Sched_Set_Next(void);
 void Sched_SendPending(void);
 void Sched_Set_Exit(void);
+/* A network day arrived while a settings mode may be open: record it here.*/
+/* The close itself is deferred to Sched_NetPreemptPoll() - Clock_Set_Exit/ */
+/* Thermo_Apply from the UART handler overflowed the 8051 stack (r01 hit    */
+/* this as a reboot). h_sched calls it only for a real day change.          */
+void Sched_NetPreempt(uint8_t day);
+/* Close the pre-empted settings modes: clock-set without applying the      */
+/* pending time, day hub and the editor of the network day WITHOUT Store    */
+/* (stale registers/cursor must not overwrite the network value). Call it   */
+/* from the main loop right after Uart1_Poll().                             */
+void Sched_NetPreemptPoll(void);
 uint8_t Sched_EntryValid(const schedule_t xdata *e);
 /* The schedule transition in force RIGHT NOW (weekly-curve rule, see          */
 /* sched_mode.c): today's last transition at or before the clock; before the   */
@@ -125,6 +135,7 @@ extern uint8_t xdata sched_m_set;                /* 1 = minutes field is set   *
 extern uint8_t xdata sched_dirty;
 extern uint8_t xdata sched_send_mask;
 extern uint8_t xdata sched_changed;
+extern uint8_t xdata sched_slot_now;             /* 1..6 slot owning "now" (cache)       */
 extern uint8_t xdata menu_set;                   /* MENU_OFF / MENU_ON                   */
 extern uint8_t xdata menu_idx;                   /* 0..MENU_ITEMS-1                      */
 extern int16_t  xdata menu_val;                  /* working value of the item            */

@@ -33,6 +33,12 @@ uint8_t xdata sched_dirty;                  /* 1 = pending report for this day  
 uint8_t xdata sched_send_mask;              /* days persisted but not yet sent   */
 uint8_t xdata sched_changed;                /* 1 = edited at all this session:   */
                                             /* controls settings_save on exit    */
+static uint8_t xdata sched_net_mask;        /* days written by the network whose */
+                                            /* settings modes the main loop must */
+                                            /* close (Sched_NetPreemptPoll)      */
+uint8_t xdata sched_slot_now;               /* 1..6 = slot owning "now", 0 = none */
+                                            /* (published by Sched_ActiveSetpoint,
+                                               read by Sched_SlotApply)          */
 
 /********************************************************************************/
 /* Schedule-set helpers.                                                        */
@@ -98,12 +104,15 @@ void Sched_Set_Store(void) {
 void Sched_Set_Draw(void) {
 	if(sched_hub) {
 		/* day-select hub: only the weekday icon, blinking as the cursor */
-		Lcd_Clear();
+		/* Buffer clear only: the final Flush paints the frame in one go - */
+		/* Lcd_Clear would flash a blank frame twice a second while the    */
+		/* cursor blinks.                                                  */
+		Lcd_ClearBuf();
 		Lcd_Weekday(clk_blink ? 0 : (uint8_t)(sched_day + 1));
 		Lcd_Flush();
 		return;
 	}
-	Lcd_Clear();
+	Lcd_ClearBuf();                       /* buffer only: one Flush per frame    */
 	Lcd_Weekday((uint8_t)(sched_day + 1));           /* current day (Mon=1)   */
 	Lcd_SymSet((uint8_t)(SYM_SP1 + sched_slot), 1);  /* current slot SP1..SP6 */
 	Lcd_SymSet(SYM_THERMO, 0);
@@ -165,6 +174,8 @@ void Sched_Set_Enter(void) {
 /* Advance: hours -> minutes -> temperature -> next slot; after slot 5 save the */
 /* finished day and move to the next one. After Sunday, leave the mode (saved). */
 void Sched_Set_Next(void) {
+	uint8_t sorted = 0;
+
 	if(sched_field < SCHED_FLD_TEMP) {
 		sched_field++;
 		Sched_Set_Draw();
@@ -179,9 +190,20 @@ void Sched_Set_Next(void) {
 		Sched_Set_Draw();
 		return;
 	}
-	/* last slot of the day: save the finished day and return to the day-      */
-	/* select hub with the NEXT day preselected (UP/DOWN then jump anywhere).  */
-	if(sched_changed) {
+	/* last slot of the day: normalize the finished day BEFORE persisting and */
+	/* reporting it - the editor kept the storage order the user typed, and    */
+	/* the canonical ascending order is what the slot icons and z2m must see. */
+	/* Sorted here, after Store (the sched_slot cursor is done with this day), */
+	/* so a day closed with "next to the end" reaches flash and ZT3L already   */
+	/* ordered. The Sunday branch below exits through Sched_Set_Exit, which    */
+	/* bypasses Sched_Set_Leave - this is the only normalize point for it.     */
+	if(Sched_DaySort(Sched_DayRow(sched_day))) {
+		sorted = 1;
+		sched_send_mask |= (uint8_t)(1U << sched_day);
+	}
+	/* save the finished day and return to the day-select hub with the NEXT    */
+	/* day preselected (UP/DOWN then jump anywhere).                           */
+	if(sched_changed || sorted) {
 		if(Settings_Persist()) Sched_SendPending();
 		else sched_send_mask = 0;
 	}
@@ -200,6 +222,47 @@ void Sched_Set_Exit(void) {
 	sched_set = SCHED_SET_OFF;
 	Lcd_Clear();                        /* clear the SP slot / weekday icons */
 	Thermo_Apply();
+}
+
+/********************************************************************************/
+/* The network replaced a whole day: record it for Sched_NetPreemptPoll().     */
+/* The UART handler must NOT close modes here - Clock_Set_Exit/Thermo_Apply    */
+/* from h_sched (Uart1_Poll) overflowed the 8051 stack and rebooted the unit   */
+/* (the same failure r01 hit; the close lives in the main loop there too).    */
+/* h_sched only calls this on a REAL change (changed || sorted).               */
+void Sched_NetPreempt(uint8_t day) {
+	sched_net_mask |= (uint8_t)(1U << day);
+}
+
+/********************************************************************************/
+/* Close the settings modes pre-empted by the network; called from the main    */
+/* loop right after Uart1_Poll().                                              */
+/* - the clock-set mode is abandoned WITHOUT applying the pending time: the    */
+/*   schedule arrived from the network, the network wins;                      */
+/* - the day hub, and the editor of a day that came from the network, close    */
+/*   WITHOUT Store - stale slot registers/cursor would overwrite the freshly   */
+/*   applied day;                                                              */
+/* - the editor of any other day is left alone.                                */
+/* The mask is consumed even when nothing matched: it is a "which days may be  */
+/* open" hint, not a queue of days to re-apply.                                */
+void Sched_NetPreemptPoll(void) {
+	uint8_t mask = sched_net_mask;
+
+	if(mask == 0) {
+		return;                         /* no network day since the last poll */
+	}
+	sched_net_mask = 0;
+
+	if(clk_set != CLK_SET_OFF) {
+		Clock_Set_Exit(0);              /* drop the pending time */
+	}
+	if(sched_set == SCHED_SET_OFF) {
+		return;
+	}
+	if(sched_hub || (mask & (uint8_t)(1U << sched_day))) {
+		sched_changed = 0;              /* the network value wins */
+		Sched_Set_Exit();
+	}
 }
 
 /* A schedule entry counts as used only if it is sane: not the explicit empty   */
@@ -334,10 +397,12 @@ int16_t Sched_ActiveSetpoint(void) {
 	const schedule_t xdata *row;
 	int16_t  t = settings.occupiedHeatingSetpoint;
 
+	sched_slot_now = 0;                 /* manual / empty week: no house */
 	if(settings.progMode & PROG_MODE_SCHEDULE) {
 		if(Sched_FindActive(&day, &idx)) {
 			row = Sched_DayRow(day);
 			t = row[idx].temperature;
+			sched_slot_now = (uint8_t)(idx + 1);  /* 1-based for the icon */
 		}
 	}
 	/* Use-time policy (CA-2): the active setpoint is clamped into [min..max]   */
